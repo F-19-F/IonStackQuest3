@@ -3,6 +3,254 @@ name: Generate IonStack Config
 on:
   workflow_dispatch:
     inputs:
+    name: Generate IonStack Config
+
+on:
+  workflow_dispatch:
+    inputs:
+      incremental:
+        description: 'Quest 3 firmware incremental'
+        required: true
+        default: '52345320035400520'
+
+      base_address:
+        description: 'kimage_text_base (ARM64 kernel base address)'
+        required: false
+        default: '0xFFFFFFC008000000'
+
+      boot_partition:
+        description: 'Partition name in payload.bin (boot / init_boot)'
+        required: false
+        default: 'boot'
+
+      magisk_url:
+        description: 'Magisk APK URL (empty = latest debug)'
+        required: false
+        default: 'https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk'
+
+
+jobs:
+  generate-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+
+      - name: Install Python dependencies
+        run: pip install vmlinux-to-elf pyelftools
+
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full xxd 2>/dev/null || true
+
+
+      - name: Download Magisk and extract magiskboot
+        run: |
+          MAGISK_URL="${{ inputs.magisk_url }}"
+
+          if [ -z "$MAGISK_URL" ]; then
+            MAGISK_URL="https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk"
+          fi
+
+          echo "[*] Downloading Magisk from: $MAGISK_URL"
+
+          wget -nv -O magisk.apk "$MAGISK_URL"
+
+          unzip -o -j magisk.apk 'lib/x86_64/libmagiskboot.so' -d .
+
+          chmod +x libmagiskboot.so
+
+          echo "[*] magiskboot version:"
+          ./libmagiskboot.so 2>&1 | head -3
+
+          rm -f magisk.apk
+
+
+      - name: Download ROM
+        run: |
+          INCREMENTAL="${{ inputs.incremental }}"
+
+          ROM_URL="https://files.cocaine.trade/firmware/meta/Quest%203/q3_${INCREMENTAL}.zip"
+
+          echo "[*] Downloading Quest 3 firmware:"
+          echo "$ROM_URL"
+
+          wget -nv -O "rom.ext" "$ROM_URL"
+
+          ls -lh rom.ext
+
+          file="./rom.ext"
+
+          if [ ! -f "$file" ]; then
+            echo "File not found"
+            exit 1
+          fi
+
+
+          MAGIC=$(xxd -l 4 -p "$file")
+
+          case "$MAGIC" in
+            504b0304)
+              new_name="${file%.*}.zip"
+              echo "Detected ZIP, renaming to $new_name"
+              mv -n "$file" "$new_name"
+              echo "RENAMED_FILE=$new_name" >> $GITHUB_ENV
+              exit 0
+              ;;
+
+            1f8b*)
+              new_name="${file%.*}.tar.gz"
+              echo "Detected GZIP, renaming to $new_name"
+              mv -n "$file" "$new_name"
+              echo "RENAMED_FILE=$new_name" >> $GITHUB_ENV
+              exit 0
+              ;;
+          esac
+                    if ./libmagiskboot.so extract "$file" >/dev/null 2>&1; then
+            echo "Valid payload.bin"
+
+            mv "$file" payload.bin
+
+            echo "RENAMED_FILE=payload.bin" >> $GITHUB_ENV
+
+          else
+
+            MAGIC=$(xxd -l 8 -p "$file")
+
+            if [ "$MAGIC" = "414e44524f494421" ]; then
+
+              echo "Valid boot.img"
+
+              mv "$file" boot.img
+
+              echo "RENAMED_FILE=boot.img" >> $GITHUB_ENV
+
+            else
+
+              echo "[!] Invalid file"
+
+              exit 1
+
+            fi
+
+          fi
+
+
+      - name: Extract ROM
+        run: |
+          mkdir -p rom_out
+
+          ROM_FILE="${RENAMED_FILE:-$(ls rom.* 2>/dev/null | head -1)}"
+
+          if [ -z "$ROM_FILE" ]; then
+            echo "[!] No ROM file found"
+            exit 1
+          fi
+
+          echo "[*] Extracting: $ROM_FILE"
+
+          case "$ROM_FILE" in
+
+            *.zip)
+              echo "[*] Using unzip..."
+              unzip -o -q "$ROM_FILE" -d rom_out || {
+                echo "[*] unzip failed, trying 7z..."
+                7z x "$ROM_FILE" -orom_out -y
+              }
+              ;;
+
+            *.tar.gz|*.tgz)
+              tar xzf "$ROM_FILE" -C rom_out
+              ;;
+
+            *)
+              echo "[*] Not an archive"
+              cp "$ROM_FILE" rom_out/
+              ;;
+
+          esac
+
+          echo "[*] ROM files:"
+          find rom_out -type f | head -40
+
+          rm -f "$ROM_FILE"
+
+
+      - name: Extract boot.img
+        id: bootimg
+        run: |
+
+          BOOT_PART="${{ inputs.boot_partition }}"
+
+
+          PAYLOAD=$(find rom_out -name 'payload.bin' -type f 2>/dev/null | head -1)
+
+          if [ -n "$PAYLOAD" ]; then
+
+            echo "[*] Found payload.bin"
+
+            ./libmagiskboot.so extract "$PAYLOAD" "$BOOT_PART" boot.img
+
+            if [ -f boot.img ] && [ -s boot.img ]; then
+
+              echo "source=payload.bin" >> "$GITHUB_OUTPUT"
+
+              rm -rf rom_out
+
+              exit 0
+
+            fi
+
+          fi
+
+
+          BOOT_IMG=$(find rom_out -name 'boot.img' -type f 2>/dev/null | head -1)
+
+          if [ -n "$BOOT_IMG" ]; then
+
+            cp "$BOOT_IMG" boot.img
+
+            echo "source=direct" >> "$GITHUB_OUTPUT"
+
+            rm -rf rom_out
+
+            exit 0
+
+          fi
+
+
+          BOOT_IMG=$(find rom_out -name 'init_boot.img' -type f 2>/dev/null | head -1)
+
+          if [ -n "$BOOT_IMG" ]; then
+
+            cp "$BOOT_IMG" boot.img
+
+            echo "source=init_boot" >> "$GITHUB_OUTPUT"
+
+            rm -rf rom_out
+
+            exit 0
+
+          fi
+
+
+          echo "[!] ERROR: Cannot find boot.img"
+
+          find rom_out
+
+          exit 1
       rom_url:
         description: 'Firmware/ROM download URL (.zip / .tar.gz / payload.bin / boot.img)'
         required: true
