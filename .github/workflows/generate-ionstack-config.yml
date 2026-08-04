@@ -67,6 +67,7 @@ jobs:
 
           chmod +x libmagiskboot.so
 
+          echo "[*] magiskboot version:"
           ./libmagiskboot.so 2>&1 | head -3
 
           rm -f magisk.apk
