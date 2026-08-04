@@ -1,1 +1,72 @@
+name: Generate IonStack Config
 
+on:
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: 'Firmware/ROM download URL (.zip / .tar.gz / payload.bin / boot.img)'
+        required: true
+
+      base_address:
+        description: 'kimage_text_base (ARM64 kernel base address)'
+        required: false
+        default: '0xFFFFFFC008000000'
+
+      boot_partition:
+        description: 'Partition name in payload.bin (boot / init_boot)'
+        required: false
+        default: 'boot'
+
+      magisk_url:
+        description: 'Magisk APK URL (empty = latest debug)'
+        required: false
+        default: 'https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk'
+
+
+jobs:
+  generate-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+
+      - name: Install Python dependencies
+        run: pip install vmlinux-to-elf pyelftools
+
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq p7zip-full xxd 2>/dev/null || true
+
+
+      - name: Download Magisk and extract magiskboot
+        run: |
+          MAGISK_URL="${{ inputs.magisk_url }}"
+
+          if [ -z "$MAGISK_URL" ]; then
+            MAGISK_URL="https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk"
+          fi
+
+          echo "[*] Downloading Magisk from: $MAGISK_URL"
+
+          wget -nv -O magisk.apk "$MAGISK_URL"
+
+          unzip -o -j magisk.apk 'lib/x86_64/libmagiskboot.so' -d .
+
+          chmod +x libmagiskboot.so
+
+          echo "[*] magiskboot version:"
+          ./libmagiskboot.so 2>&1 | head -3
+
+          rm -f magisk.apk
