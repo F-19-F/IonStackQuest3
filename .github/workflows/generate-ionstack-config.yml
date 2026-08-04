@@ -3,9 +3,10 @@ name: Generate IonStack Config
 on:
   workflow_dispatch:
     inputs:
-      rom_url:
-        description: 'Firmware/ROM download URL (.zip / .tar.gz / payload.bin / boot.img)'
+      incremental:
+        description: 'Quest 3 firmware incremental'
         required: true
+        default: '52345320035400520'
 
       base_address:
         description: 'kimage_text_base (ARM64 kernel base address)'
