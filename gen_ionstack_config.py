@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+https://files.cocaine.trade/firmware/meta/Quest%203/q3_52345320035400520.zip
 """
 IonStack Kernel Config Generator
 =================================
