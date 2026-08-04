@@ -32,11 +32,11 @@ jobs:
     steps:
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -55,11 +55,8 @@ jobs:
         run: |
           MAGISK_URL="${{ inputs.magisk_url }}"
 
-          if [ -z "$MAGISK_URL" ]; then
-            MAGISK_URL="https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk"
-          fi
-
-          echo "[*] Downloading Magisk from: $MAGISK_URL"
+          echo "[*] Downloading Magisk:"
+          echo "$MAGISK_URL"
 
           wget -nv -O magisk.apk "$MAGISK_URL"
 
@@ -67,7 +64,7 @@ jobs:
 
           chmod +x libmagiskboot.so
 
-          echo "[*] magiskboot version:"
+          echo "[*] magiskboot:"
           ./libmagiskboot.so 2>&1 | head -3
 
           rm -f magisk.apk
@@ -82,43 +79,19 @@ jobs:
           echo "[*] Downloading:"
           echo "$ROM_URL"
 
-          wget -nv -O "rom.ext" "$ROM_URL"
+          wget -nv -O rom.zip "$ROM_URL"
 
-          ls -lh rom.ext
-
-          MAGIC=$(xxd -l 4 -p rom.ext)
-
-          case "$MAGIC" in
-            504b0304)
-              mv rom.ext rom.zip
-              echo "RENAMED_FILE=rom.zip" >> $GITHUB_ENV
-              ;;
-
-            1f8b*)
-              mv rom.ext rom.tar.gz
-              echo "RENAMED_FILE=rom.tar.gz" >> $GITHUB_ENV
-              ;;
-
-            *)
-              echo "[!] Unknown file type"
-              exit 1
-              ;;
-          esac
+          ls -lh rom.zip
 
 
       - name: Extract ROM
         run: |
           mkdir -p rom_out
 
-          case "${RENAMED_FILE}" in
-            *.zip)
-              unzip -o rom.zip -d rom_out
-              ;;
+          unzip -o rom.zip -d rom_out
 
-            *.tar.gz)
-              tar xzf rom.tar.gz -C rom_out
-              ;;
-          esac
+          echo "[*] ROM files:"
+          find rom_out -type f | head -40
 
 
       - name: Extract boot.img
@@ -129,6 +102,7 @@ jobs:
           PAYLOAD=$(find rom_out -name payload.bin | head -1)
 
           if [ -n "$PAYLOAD" ]; then
+
             echo "[*] Found payload.bin"
 
             ./libmagiskboot.so extract "$PAYLOAD" "$BOOT_PART" boot.img
@@ -138,10 +112,32 @@ jobs:
             BOOT_IMG=$(find rom_out -name boot.img | head -1)
 
             if [ -n "$BOOT_IMG" ]; then
+
+              echo "[*] Found boot.img"
+
               cp "$BOOT_IMG" boot.img
+
             else
-              echo "[!] boot.img not found"
-              exit 1
+
+              INIT_BOOT=$(find rom_out -name init_boot.img | head -1)
+
+              if [ -n "$INIT_BOOT" ]; then
+
+                echo "[*] Found init_boot.img"
+
+                cp "$INIT_BOOT" boot.img
+
+              else
+
+                echo "[!] boot image not found"
+                exit 1
+
+              fi
+
             fi
 
           fi
+
+
+          echo "[*] Boot image ready:"
+          ls -lh boot.img
