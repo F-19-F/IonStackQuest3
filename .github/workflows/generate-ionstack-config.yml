@@ -3,6 +3,27 @@ name: Generate IonStack Config
 on:
   workflow_dispatch:
     inputs:
+      rom_url:
+        description: 'Firmware/ROM download URL (.zip / .tar.gz / payload.bin / boot.img)'
+        required: true
+      base_address:
+        description: 'kimage_text_base (ARM64 kernel base address)'
+        required: false
+        default: '0xFFFFFFC008000000'
+      boot_partition:
+        description: 'Partition name in payload.bin (boot / init_boot)'
+        required: false
+        default: 'boot'
+      magisk_url:
+        description: 'Magisk APK URL (empty = latest debug)'
+        required: false
+        default: 'https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk'
+        
+       name: Generate IonStack Config
+
+on:
+  workflow_dispatch:
+    inputs:
       incremental:
         description: 'Quest 3 firmware incremental'
         required: true
@@ -23,24 +44,10 @@ on:
         required: false
         default: 'https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk'
 
-on:
-  workflow_dispatch:
-    inputs:
-      rom_url:
-        description: 'Firmware/ROM download URL (.zip / .tar.gz / payload.bin / boot.img)'
-        required: true
-      base_address:
-        description: 'kimage_text_base (ARM64 kernel base address)'
-        required: false
-        default: '0xFFFFFFC008000000'
-      boot_partition:
-        description: 'Partition name in payload.bin (boot / init_boot)'
-        required: false
-        default: 'boot'
-      magisk_url:
-        description: 'Magisk APK URL (empty = latest debug)'
-        required: false
-        default: 'https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk'
+
+jobs:
+  generate-config:
+    runs-on: ubuntu-latest
         
 
 jobs:
