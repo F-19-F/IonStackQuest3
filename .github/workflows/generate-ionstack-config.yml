@@ -3,10 +3,10 @@ name: Generate IonStack Config
 on:
   workflow_dispatch:
     inputs:
-      rom_url:
-        description: 'Quest 3 firmware URL (.zip / .tar.gz / payload.bin / boot.img)'
+      incremental:
+        description: 'Quest 3 firmware incremental number'
         required: true
-        default: 'https://files.cocaine.trade/firmware/meta/Quest%203/q3_52345320035400520.zip'
+        default: '52345320035400520'
 
       base_address:
         description: 'kimage_text_base (ARM64 kernel base address)'
@@ -75,70 +75,73 @@ jobs:
 
       - name: Download ROM
         run: |
-          ROM_URL="${{ inputs.rom_url }}"
+          INCREMENTAL="${{ inputs.incremental }}"
 
-          echo "[*] Downloading: $ROM_URL"
+          ROM_URL="https://files.cocaine.trade/firmware/meta/Quest%203/q3_${INCREMENTAL}.zip"
+
+          echo "[*] Downloading:"
+          echo "$ROM_URL"
 
           wget -nv -O "rom.ext" "$ROM_URL"
 
           ls -lh rom.ext
 
-          file="./rom.ext"
-
-          if [ ! -f "$file" ]; then
-            echo "File not found"
-            exit 1
-          fi
-
-
-          MAGIC=$(xxd -l 4 -p "$file")
+          MAGIC=$(xxd -l 4 -p rom.ext)
 
           case "$MAGIC" in
-
             504b0304)
-              new_name="${file%.*}.zip"
-              echo "Detected ZIP"
-              mv -n "$file" "$new_name"
-              echo "RENAMED_FILE=$new_name" >> $GITHUB_ENV
-              exit 0
+              mv rom.ext rom.zip
+              echo "RENAMED_FILE=rom.zip" >> $GITHUB_ENV
               ;;
 
             1f8b*)
-              new_name="${file%.*}.tar.gz"
-              echo "Detected GZIP"
-              mv -n "$file" "$new_name"
-              echo "RENAMED_FILE=$new_name" >> $GITHUB_ENV
-              exit 0
+              mv rom.ext rom.tar.gz
+              echo "RENAMED_FILE=rom.tar.gz" >> $GITHUB_ENV
               ;;
 
+            *)
+              echo "[!] Unknown file type"
+              exit 1
+              ;;
           esac
 
 
-          if ./libmagiskboot.so extract "$file" >/dev/null 2>&1; then
+      - name: Extract ROM
+        run: |
+          mkdir -p rom_out
 
-            echo "Valid payload.bin"
+          case "${RENAMED_FILE}" in
+            *.zip)
+              unzip -o rom.zip -d rom_out
+              ;;
 
-            mv "$file" payload.bin
+            *.tar.gz)
+              tar xzf rom.tar.gz -C rom_out
+              ;;
+          esac
 
-            echo "RENAMED_FILE=payload.bin" >> $GITHUB_ENV
+
+      - name: Extract boot.img
+        id: bootimg
+        run: |
+          BOOT_PART="${{ inputs.boot_partition }}"
+
+          PAYLOAD=$(find rom_out -name payload.bin | head -1)
+
+          if [ -n "$PAYLOAD" ]; then
+            echo "[*] Found payload.bin"
+
+            ./libmagiskboot.so extract "$PAYLOAD" "$BOOT_PART" boot.img
 
           else
 
-            MAGIC=$(xxd -l 8 -p "$file")
+            BOOT_IMG=$(find rom_out -name boot.img | head -1)
 
-            if [ "$MAGIC" = "414e44524f494421" ]; then
-
-              echo "Valid boot.img"
-
-              mv "$file" boot.img
-
-              echo "RENAMED_FILE=boot.img" >> $GITHUB_ENV
-
+            if [ -n "$BOOT_IMG" ]; then
+              cp "$BOOT_IMG" boot.img
             else
-
-              echo "[!] Invalid file"
+              echo "[!] boot.img not found"
               exit 1
-
             fi
 
           fi
