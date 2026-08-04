@@ -42,7 +42,8 @@ jobs:
 
 
       - name: Install Python dependencies
-        run: pip install vmlinux-to-elf pyelftools
+        run: |
+          pip install vmlinux-to-elf pyelftools
 
 
       - name: Install system tools
@@ -64,6 +65,7 @@ jobs:
 
           chmod +x libmagiskboot.so
 
+          echo "[*] magiskboot check:"
           ./libmagiskboot.so 2>&1 | head -3
 
           rm -f magisk.apk
@@ -89,7 +91,7 @@ jobs:
 
           unzip -o rom.zip -d rom_out
 
-          echo "[*] ROM contents:"
+          echo "[*] ROM files:"
           find rom_out -type f | head -40
 
 
@@ -101,33 +103,45 @@ jobs:
           PAYLOAD=$(find rom_out -name payload.bin | head -1)
 
           if [ -n "$PAYLOAD" ]; then
+
             echo "[*] Found payload.bin"
+
             ./libmagiskboot.so extract "$PAYLOAD" "$BOOT_PART" boot.img
+
 
           else
 
             BOOT_IMG=$(find rom_out -name boot.img | head -1)
 
             if [ -n "$BOOT_IMG" ]; then
+
               echo "[*] Found boot.img"
+
               cp "$BOOT_IMG" boot.img
+
 
             else
 
               INIT_BOOT=$(find rom_out -name init_boot.img | head -1)
 
               if [ -n "$INIT_BOOT" ]; then
+
                 echo "[*] Found init_boot.img"
+
                 cp "$INIT_BOOT" boot.img
 
+
               else
+
                 echo "[!] boot image not found"
                 exit 1
+
               fi
 
             fi
 
           fi
+
 
           echo "[*] Boot image ready:"
           ls -lh boot.img
