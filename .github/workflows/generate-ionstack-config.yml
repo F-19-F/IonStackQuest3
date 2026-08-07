@@ -1,5 +1,5 @@
 name: Generate IonStack Config
-
+https://files.cocaine.trade/firmware/meta/Quest%203/q3_{incremental}.zip
 on:
   workflow_dispatch:
     inputs:
@@ -51,7 +51,7 @@ jobs:
       # Get magiskboot (statically linked x86_64, runs natively)
       # ============================================================
       - name: Download Magisk and extract magiskboot
-        run: |
+        run:
           MAGISK_URL="${{ inputs.magisk_url }}"
           if [ -z "$MAGISK_URL" ]; then
             MAGISK_URL="https://github.com/topjohnwu/Magisk/releases/latest/download/app-debug.apk"
