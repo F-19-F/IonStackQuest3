@@ -9,7 +9,7 @@ on:
       base_address:
         description: 'kimage_text_base (ARM64 kernel base address)'
         required: false
-        default: '0xFFFFFFC008000000'
+        default: '0xFFFFFFC000000000'
       boot_partition:
         description: 'Partition name in payload.bin (boot / init_boot)'
         required: false
@@ -25,15 +25,9 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ============================================================
-      # Checkout the repo (for gen_ionstack_config.py)
-      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ============================================================
-      # Setup Python
-      # ============================================================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -47,9 +41,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq p7zip-full xxd 2>/dev/null || true
 
-      # ============================================================
-      # Get magiskboot (statically linked x86_64, runs natively)
-      # ============================================================
       - name: Download Magisk and extract magiskboot
         run: |
           MAGISK_URL="${{ inputs.magisk_url }}"
@@ -63,27 +54,35 @@ jobs:
           unzip -o -j magisk.apk 'lib/x86_64/libmagiskboot.so' -d .
           chmod +x libmagiskboot.so
 
-          # Verify it runs
           echo "[*] magiskboot version:"
           ./libmagiskboot.so 2>&1 | head -3
 
-          # Free disk space
           rm -f magisk.apk
 
-      # ============================================================
-      # Download the ROM / firmware
-      # ============================================================
       - name: Download ROM
         run: |
           ROM_URL="${{ inputs.rom_url }}"
           echo "[*] Downloading: $ROM_URL"
 
-          wget -nv -O "rom.ext" "$ROM_URL"
+          # Check if URL is accessible first
+          echo "[*] Validating URL accessibility..."
+          if ! wget --spider -q "$ROM_URL" 2>&1; then
+            echo "[!] ERROR: URL is not accessible"
+            echo "[!] URL: $ROM_URL"
+            echo "[!] Please verify the ROM URL is correct and accessible"
+            exit 1
+          fi
+
+          wget -nv -O "rom.ext" "$ROM_URL" || {
+            echo "[!] ERROR: Failed to download ROM"
+            echo "[!] Check that the URL is valid and accessible"
+            exit 1
+          }
+          
           ls -lh "rom.ext"
           file="./rom.ext"
           if [ ! -f "$file" ]; then echo "File not found"; exit 1; fi
 
-          # 2a. 用魔数判断 zip/gzip（file 会把带 META-INF/ 的 OTA zip 误判成 JAR）
           MAGIC=$(xxd -l 4 -p "$file")
           case "$MAGIC" in
             504b0304)
@@ -102,13 +101,11 @@ jobs:
               ;;
           esac
 
-          # 2b. 不是压缩包，尝试用 magiskboot 检测 payload
           if ./libmagiskboot.so extract "$file" >/dev/null 2>&1; then
             echo "Valid payload.bin"
             mv "$file" payload.bin
             echo "RENAMED_FILE=payload.bin" >> $GITHUB_ENV
           else
-            # 用魔数判断是否为直接下载的 boot.img
             MAGIC=$(xxd -l 8 -p "$file")
             if [ "$MAGIC" = "414e44524f494421" ]; then
               echo "Valid boot.img (ANDROID! magic)"
@@ -120,10 +117,6 @@ jobs:
             fi
           fi
 
-
-      # ============================================================
-      # Extract ROM
-      # ============================================================
       - name: Extract ROM
         run: |
           mkdir -p rom_out
@@ -156,19 +149,14 @@ jobs:
           echo "[*] ROM contents (first 40 files):"
           find rom_out -type f | head -40
 
-          # Free disk space: delete the original archive
           rm -f "$ROM_FILE"
           echo "[*] Removed original archive to free space"
 
-      # ============================================================
-      # Locate and extract boot.img
-      # ============================================================
       - name: Extract boot.img
         id: bootimg
         run: |
           BOOT_PART="${{ inputs.boot_partition }}"
 
-          # --- Strategy 1: payload.bin (OTA package) ---
           PAYLOAD=$(find rom_out -name 'payload.bin' -type f 2>/dev/null | head -1)
           if [ -n "$PAYLOAD" ]; then
             echo "[*] Found payload.bin: $PAYLOAD ($(du -h "$PAYLOAD" | cut -f1))"
@@ -177,14 +165,12 @@ jobs:
             if [ -f boot.img ] && [ -s boot.img ]; then
               echo "[+] boot.img extracted ($(du -h boot.img | cut -f1))"
               echo "source=payload.bin" >> "$GITHUB_OUTPUT"
-              # Free disk: remove payload + rom dir
               rm -rf rom_out
               exit 0
             fi
             echo "[!] magiskboot extract failed for '$BOOT_PART', trying other partitions..."
           fi
 
-          # --- Strategy 2: boot.img directly in ROM ---
           BOOT_IMG=$(find rom_out -name 'boot.img' -type f 2>/dev/null | head -1)
           if [ -n "$BOOT_IMG" ]; then
             echo "[*] Found boot.img: $BOOT_IMG ($(du -h "$BOOT_IMG" | cut -f1))"
@@ -194,7 +180,6 @@ jobs:
             exit 0
           fi
 
-          # --- Strategy 3: init_boot.img (Android 13+ GKI) ---
           BOOT_IMG=$(find rom_out -name 'init_boot.img' -type f 2>/dev/null | head -1)
           if [ -n "$BOOT_IMG" ]; then
             echo "[*] Found init_boot.img: $BOOT_IMG"
@@ -204,7 +189,6 @@ jobs:
             exit 0
           fi
 
-          # --- Strategy 4: Downloaded file IS a boot image ---
           for f in $(find rom_out -type f 2>/dev/null); do
             MAGIC=$(xxd -l 8 -p "$f")
             if [ "$MAGIC" = "414e44524f494421" ]; then
@@ -220,29 +204,22 @@ jobs:
           find . -type f
           exit 1
 
-      # ============================================================
-      # Unpack boot.img → extract kernel with magiskboot
-      # ============================================================
       - name: Unpack boot.img and extract kernel
         run: |
           mkdir -p boot_unpack
           cd boot_unpack
 
           echo "[*] Unpacking boot.img ($(du -h ../boot.img | cut -f1)) with magiskboot..."
-
-          # magiskboot unpacks and auto-decompresses kernel
           ../libmagiskboot.so unpack ../boot.img
 
           echo "[*] Unpacked contents:"
           ls -la
 
-          # magiskboot produces a decompressed 'kernel' file
           if [ -f kernel ]; then
             echo "[+] Found decompressed kernel ($(du -h kernel | cut -f1))"
             file kernel
             cp kernel ../kernel.Image
           else
-            # If kernel is not decompressed for some reason
             for k in kernel.gz kernel.lz4 kernel.lzma kernel.xz kernel.bz2 kernel.zst; do
               if [ -f "$k" ]; then
                 echo "[*] Decompressing $k..."
@@ -262,20 +239,18 @@ jobs:
           ls -lh ../kernel.Image
           file ../kernel.Image
 
-      # ============================================================
-      # Convert raw kernel Image → ELF with symbols
-      # ============================================================
       - name: Convert kernel to ELF (vmlinux-to-elf)
         run: |
           echo "[*] Running vmlinux-to-elf with base ${{ inputs.base_address }}..."
           vmlinux-to-elf \
             --base-address "${{ inputs.base_address }}" \
-            kernel.Image kernel.elf
+            --relaxed \
+            kernel.Image kernel.elf || true
+          if [ ! -f kernel.elf ]; then
+            echo "[!] ERROR: vmlinux-to-elf failed completely"
+            exit 1
+          fi
 
-          echo "[*] kernel.elf generated:"
-          ls -lh kernel.elf
-
-          # Sanity check
           python3 -c "
           from elftools.elf.elffile import ELFFile
           with open('kernel.elf', 'rb') as f:
@@ -290,9 +265,6 @@ jobs:
                   print('[!] WARNING: No .symtab in output ELF')
           "
 
-      # ============================================================
-      # Generate ionstack.conf
-      # ============================================================
       - name: Generate IonStack config
         id: generate
         run: |
@@ -301,9 +273,6 @@ jobs:
           cat ionstack.conf
           echo '=========================================================='
 
-      # ============================================================
-      # Upload artifacts
-      # ============================================================
       - name: Upload ionstack.conf
         uses: actions/upload-artifact@v4
         with:
