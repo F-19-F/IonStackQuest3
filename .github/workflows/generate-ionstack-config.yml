@@ -9,7 +9,7 @@ on:
       base_address:
         description: 'kimage_text_base (ARM64 kernel base address)'
         required: false
-        default: '0xFFFFFFC008000000'
+        default: '0xFFFFFFC000000000'
       boot_partition:
         description: 'Partition name in payload.bin (boot / init_boot)'
         required: false
@@ -269,11 +269,13 @@ jobs:
         run: |
           echo "[*] Running vmlinux-to-elf with base ${{ inputs.base_address }}..."
           vmlinux-to-elf \
-            --base-address "${{ inputs.base_address }}" \
-            kernel.Image kernel.elf
-
-          echo "[*] kernel.elf generated:"
-          ls -lh kernel.elf
+  --base-address "${{ inputs.base_address }}" \
+  --relaxed \
+  kernel.Image kernel.elf || true
+if [ ! -f kernel.elf ]; then
+  echo "[!] ERROR: vmlinux-to-elf failed completely"
+  exit 1
+fi
 
           # Sanity check
           python3 -c "
